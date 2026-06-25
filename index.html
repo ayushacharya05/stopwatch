@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Minimalist Stopwatch</title>
+    <title>Aesthetic Target Stopwatch</title>
     <style>
         * {
             box-sizing: border-box;
@@ -15,88 +15,217 @@
         body {
             background-color: #000000;
             color: #ffffff;
-            /* Using a clean, geometric sans-serif stack to closely match image_3d61eb.png */
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             display: flex;
+            flex-direction: column;
             justify-content: center;
             align-items: center;
             min-height: 100vh;
             overflow: hidden;
             cursor: pointer;
+            transition: background-color 0.3s;
         }
 
-        .stopwatch-display {
-            /* Large, high-impact typography matching the reference image layout */
+        .stopwatch-container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
             font-size: 15vw; 
             font-weight: 400;
             letter-spacing: -0.02em;
             line-height: 1;
-            text-align: center;
             width: 100%;
             padding: 0 5vw;
-            /* Feature tabular-nums to prevent characters from shifting layout during count */
-            font-variant-numeric: tabular-nums; 
+        }
+
+        .time-group {
+            font-variant-numeric: tabular-nums;
+            display: inline-block;
+            transition: opacity 0.2s;
+        }
+
+        .paused .time-group:hover {
+            color: #aaaaaa;
+            cursor: ns-resize;
+        }
+
+        .separator {
+            font-variant-numeric: tabular-nums;
+            margin: 0 0.1vw;
+        }
+
+        .target-label {
+            position: absolute;
+            bottom: 8vh;
+            font-size: 1.2rem;
+            letter-spacing: 0.2em;
+            text-transform: uppercase;
+            color: rgba(255, 255, 255, 0.3);
+            font-family: sans-serif;
+            transition: opacity 0.3s;
+        }
+        
+        .hidden {
+            opacity: 0;
         }
     </style>
 </head>
-<body>
+<body class="paused">
 
-    <div class="stopwatch-display" id="display">00:00:00</div>
+    <div class="stopwatch-container" id="stopwatchContainer">
+        <span class="time-group" id="minsGroup">00</span>
+        <span class="separator">:</span>
+        <span class="time-group" id="secsGroup">00</span>
+        <span class="separator">:</span>
+        <span class="time-group" id="msGroup">00</span>
+    </div>
+
+    <div class="target-label" id="targetLabel">Stopwatch Mode</div>
 
     <script>
-        let startTime = 0;
         let elapsedTime = 0;
+        let targetTime = 0; 
         let timerInterval;
         let isRunning = false;
+        let startTime;
+        let targetReached = false;
 
-        const displayEl = document.getElementById('display');
+        // Built-in Web Audio context to synthesize a clean notification tone
+        let audioCtx = null;
 
-        function formatTime(time) {
-            let mins = Math.floor(time / 60000);
-            let secs = Math.floor((time % 60000) / 1000);
-            let ms = Math.floor((time % 1000) / 10);
+        const bodyEl = document.body;
+        const minsEl = document.getElementById('minsGroup');
+        const secsEl = document.getElementById('secsGroup');
+        const msEl = document.getElementById('msGroup');
+        const targetLabel = document.getElementById('targetLabel');
 
-            // Roll over minutes if they exceed 99 to keep the exact 6-digit structure
-            let minsStr = String(mins % 100).padStart(2, '0');
-            let secsStr = String(secs).padStart(2, '0');
-            let msStr = String(ms).padStart(2, '0');
-
-            // Formatted exactly as MM:SS:MS to mirror the image reference
-            return `${minsStr}:${secsStr}:${msStr}`;
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
         }
 
-        function updateDisplay() {
+        // Plays an elegant aesthetic double-beep alert
+        function playNotificationSound() {
+            initAudio();
+            if (!audioCtx) return;
+
+            const now = audioCtx.currentTime;
+            
+            // First Beep
+            let osc1 = audioCtx.createOscillator();
+            let gain1 = audioCtx.createGain();
+            osc1.type = 'sine';
+            osc1.frequency.setValueAtTime(880, now); // Pure high A note
+            gain1.gain.setValueAtTime(0.15, now);
+            gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+            osc1.connect(gain1);
+            gain1.connect(audioCtx.destination);
+            osc1.start(now);
+            osc1.stop(now + 0.13);
+
+            // Second Beep (slightly delayed and higher pitched)
+            let osc2 = audioCtx.createOscillator();
+            let gain2 = audioCtx.createGain();
+            osc2.type = 'sine';
+            osc2.frequency.setValueAtTime(1046.5, now + 0.15); // Pure high C note
+            gain2.gain.setValueAtTime(0.15, now + 0.15);
+            gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+            osc2.connect(gain2);
+            gain2.connect(audioCtx.destination);
+            osc2.start(now + 0.15);
+            osc2.stop(now + 0.31);
+        }
+
+        function formatDisplay(timeInMs) {
+            let mins = Math.floor(timeInMs / 60000);
+            let secs = Math.floor((timeInMs % 60000) / 1000);
+            let ms = Math.floor((timeInMs % 1000) / 10);
+
+            minsEl.textContent = String(mins).padStart(2, '0');
+            secsEl.textContent = String(secs).padStart(2, '0');
+            msEl.textContent = String(ms).padStart(2, '0');
+        }
+
+        function updateTargetLabel() {
+            if (targetTime > 0) {
+                let mins = String(Math.floor(targetTime / 60000)).padStart(2, '0');
+                let secs = String(Math.floor((targetTime % 60000) / 1000)).padStart(2, '0');
+                targetLabel.textContent = `Target Set: ${mins}:${secs}:00`;
+                targetLabel.style.color = "rgba(255, 255, 255, 0.6)";
+            } else {
+                targetLabel.textContent = "Stopwatch Mode";
+                targetLabel.style.color = "rgba(255, 255, 255, 0.3)";
+            }
+        }
+
+        function tick() {
             elapsedTime = Date.now() - startTime;
-            displayEl.textContent = formatTime(elapsedTime);
+            
+            // Trigger target alerts
+            if (targetTime > 0 && elapsedTime >= targetTime && !targetReached) {
+                targetReached = true;
+                playNotificationSound();
+                
+                // Pure minimal flash visual feedback
+                bodyEl.style.backgroundColor = '#222222';
+                setTimeout(() => bodyEl.style.backgroundColor = '#000000', 300);
+            }
+
+            formatDisplay(elapsedTime);
         }
 
         function toggleTimer() {
+            initAudio(); // Initialize audio context on first user click (browser security requirement)
             if (!isRunning) {
-                // Start / Resume
                 startTime = Date.now() - elapsedTime;
-                timerInterval = setInterval(updateDisplay, 10);
+                timerInterval = setInterval(tick, 10);
                 isRunning = true;
+                bodyEl.classList.remove('paused');
+                targetLabel.classList.add('hidden'); 
             } else {
-                // Pause
                 clearInterval(timerInterval);
                 isRunning = false;
+                bodyEl.classList.add('paused');
+                targetLabel.classList.remove('hidden');
             }
         }
 
         function resetTimer(e) {
-            // Prevent standard click action when double-clicking
             e.stopPropagation(); 
-            
             clearInterval(timerInterval);
             elapsedTime = 0;
-            displayEl.textContent = "00:00:00";
+            targetTime = 0;
+            targetReached = false;
             isRunning = false;
+            formatDisplay(0);
+            updateTargetLabel();
+            bodyEl.classList.add('paused');
+            targetLabel.classList.remove('hidden');
         }
 
-        // Tap/Click anywhere on the screen to Start or Pause
-        document.body.addEventListener('click', toggleTimer);
+        function handleScroll(e, type) {
+            if (isRunning) return;
+            e.preventDefault();
 
-        // Double-click anywhere on the screen to Reset
+            elapsedTime = 0; 
+            targetReached = false;
+
+            let change = e.deltaY < 0 ? 1 : -1;
+            
+            if (type === 'mins') targetTime += change * 60000;
+            if (type === 'secs') targetTime += change * 1000;
+            
+            if (targetTime < 0) targetTime = 0;
+            
+            formatDisplay(targetTime);
+            updateTargetLabel();
+        }
+
+        minsEl.addEventListener('wheel', (e) => handleScroll(e, 'mins'));
+        secsEl.addEventListener('wheel', (e) => handleScroll(e, 'secs'));
+
+        document.body.addEventListener('click', toggleTimer);
         document.body.addEventListener('dblclick', resetTimer);
     </script>
 </body>
